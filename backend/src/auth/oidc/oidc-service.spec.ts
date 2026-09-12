@@ -196,8 +196,17 @@ describe('OidcService', () => {
       expect(logger.warn).not.toHaveBeenCalled();
     });
 
-    it('stores no groups and warns if the claim is missing', async () => {
+    it('stores an empty list if the claim is missing', async () => {
       const request = await extractWithUserinfo({}, { ...fieldConfig, groupsField: 'groups' });
+      expect(request.session.pendingUser?.groups).toEqual([]);
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('stores no groups and warns if the claim has an unsupported type', async () => {
+      const request = await extractWithUserinfo(
+        { groups: { team: true } },
+        { ...fieldConfig, groupsField: 'groups' },
+      );
       expect(request.session.pendingUser?.groups).toBeUndefined();
       expect(logger.warn).toHaveBeenCalledTimes(1);
     });

@@ -33,7 +33,7 @@ interface PendingUserSessionState {
   /** The pending user id as provided from the external auth provider, required for matching to a HedgeDoc identity */
   providerUserId?: string;
 
-  /** The group names sent by the external auth provider, undefined if group sync is disabled or no groups were sent */
+  /** The group names sent by the external auth provider, undefined if group sync is disabled or the groups could not be read */
   groups?: string[];
 }
 

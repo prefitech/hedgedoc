@@ -232,7 +232,7 @@ export class OidcService {
       groups = OidcService.getGroupsFromResponse(userInfoResponse, oidcConfig.groupsField);
       if (groups === undefined) {
         this.logger.warn(
-          `Group sync is enabled for OIDC provider "${oidcIdentifier}", but the userinfo response has no usable field "${oidcConfig.groupsField}". Group memberships are left unchanged.`,
+          `Group sync is enabled for OIDC provider "${oidcIdentifier}", but the field "${oidcConfig.groupsField}" of the userinfo response is neither a list nor a string. Group memberships are left unchanged.`,
           'extractUserInfoFromCallback',
         );
       }
@@ -368,16 +368,20 @@ export class OidcService {
    * Reads the group names from the userinfo response
    *
    * The field may contain a list of strings or a comma-separated string.
+   * A missing field means that the user is in no group, since providers like Keycloak omit the claim in that case.
    *
    * @param response The response from the OIDC userinfo endpoint
    * @param field The field that contains the groups
-   * @returns The trimmed, non-empty group names, or undefined if the field is missing or of an unsupported type
+   * @returns The trimmed, non-empty group names, or undefined if the field is of an unsupported type
    */
   private static getGroupsFromResponse(
     response: UserinfoResponse,
     field: string,
   ): string[] | undefined {
     const value = response[field];
+    if (value === undefined || value === null) {
+      return [];
+    }
     let rawGroups: unknown[];
     if (Array.isArray(value)) {
       rawGroups = value;

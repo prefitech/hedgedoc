@@ -39,7 +39,10 @@ The field may contain a list of group names or a comma-separated string.
   is set, this only applies to groups whose name matches the regular expression; memberships in
   all other groups are left untouched.
 - Group names starting with `_` are ignored, as they are reserved for HedgeDoc's special groups.
-- If the userinfo response does not contain the field at all, the memberships are not changed.
+- If the userinfo response does not contain the field, the user is treated as being in no group,
+  since some providers (Keycloak, for example) omit the claim for users without any group.
+- If the field is neither a list nor a string, the memberships are left unchanged and a warning is
+  logged.
 
 The synchronization happens independently of `HD_AUTH_SYNC_SOURCE`, which only controls the
 profile data (display name, email address and profile picture).
