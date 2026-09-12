@@ -12,8 +12,10 @@ import { Mock } from 'ts-mockery';
 import * as jose from 'jose';
 import type { JWTPayload } from 'jose';
 
+import type { RequestWithSession } from '../../api/utils/request.type';
 import appConfiguration from '../../config/app.config';
 import authConfiguration from '../../config/auth.config';
+import { GroupsService } from '../../groups/groups.service';
 import { ConsoleLoggerService } from '../../logger/console-logger.service';
 import { SessionService } from '../../sessions/session.service';
 import { IdentityService } from '../identity.service';
@@ -28,6 +30,8 @@ describe('OidcService', () => {
   let oidcService: OidcService;
   let identityService: IdentityService;
   let sessionService: SessionService;
+  let groupsService: GroupsService;
+  let logger: ConsoleLoggerService;
 
   const mockOidcConfig = {
     identifier: 'test-oidc',
@@ -77,11 +81,18 @@ describe('OidcService', () => {
           }),
         },
         {
+          provide: GroupsService,
+          useValue: Mock.of<GroupsService>({
+            syncGroupMemberships: jest.fn(() => Promise.resolve()),
+          }),
+        },
+        {
           provide: ConsoleLoggerService,
           useValue: Mock.of<ConsoleLoggerService>({
             setContext: jest.fn(),
             debug: jest.fn(),
             error: jest.fn(),
+            warn: jest.fn(),
           }),
         },
         {
@@ -98,6 +109,8 @@ describe('OidcService', () => {
     oidcService = testModule.get<OidcService>(OidcService);
     identityService = testModule.get<IdentityService>(IdentityService);
     sessionService = testModule.get<SessionService>(SessionService);
+    groupsService = testModule.get<GroupsService>(GroupsService);
+    logger = testModule.get<ConsoleLoggerService>(ConsoleLoggerService);
 
     // Manually set up the client config to bypass the initialization
     (oidcService as any).clientConfigs.set(mockOidcConfig.identifier, {
@@ -110,6 +123,140 @@ describe('OidcService', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  const setClientConfig = (config: Record<string, unknown>, client: object = mockClient) => {
+    (oidcService as any).clientConfigs.set(mockOidcConfig.identifier, {
+      client,
+      issuer: mockIssuer,
+      redirectUri: `http://localhost:3000/api/private/auth/oidc/${mockOidcConfig.identifier}/callback`,
+      config: { ...mockOidcConfig, ...config },
+    });
+  };
+
+  describe('extractUserInfoFromCallback', () => {
+    const extractWithUserinfo = async (
+      userinfo: Record<string, unknown>,
+      config: Record<string, unknown>,
+    ): Promise<RequestWithSession> => {
+      setClientConfig(config, {
+        ...mockClient,
+        callbackParams: jest.fn(() => ({})),
+        callback: jest.fn(() => Promise.resolve({})),
+        userinfo: jest.fn(() =>
+          Promise.resolve({ sub: 'carol-id', preferred_username: 'carol', ...userinfo }),
+        ),
+      });
+      const request = Mock.of<RequestWithSession>({
+        raw: {} as RequestWithSession['raw'],
+        session: {
+          oidc: { idToken: null, sid: null, loginCode: 'code', loginState: 'state' },
+          pendingUser: null,
+        } as unknown as RequestWithSession['session'],
+      });
+      await oidcService.extractUserInfoFromCallback(mockOidcConfig.identifier, request);
+      return request;
+    };
+    const fieldConfig = {
+      userIdField: 'sub',
+      usernameField: 'preferred_username',
+      displayNameField: 'name',
+      emailField: 'email',
+      profilePictureField: 'picture',
+    };
+
+    it('stores the groups from a list claim', async () => {
+      const request = await extractWithUserinfo(
+        { groups: ['team', ' other ', '', 42] },
+        { ...fieldConfig, groupsField: 'groups' },
+      );
+      expect(request.session.pendingUser?.groups).toEqual(['team', 'other']);
+      expect(request.session.pendingUser?.providerUserId).toBe('carol-id');
+    });
+
+    it('stores the groups from a comma-separated claim', async () => {
+      const request = await extractWithUserinfo(
+        { roles: 'team, other,,' },
+        { ...fieldConfig, groupsField: 'roles' },
+      );
+      expect(request.session.pendingUser?.groups).toEqual(['team', 'other']);
+    });
+
+    it('stores an empty list if the provider sends no groups', async () => {
+      const request = await extractWithUserinfo(
+        { groups: [] },
+        { ...fieldConfig, groupsField: 'groups' },
+      );
+      expect(request.session.pendingUser?.groups).toEqual([]);
+    });
+
+    it('stores no groups if group sync is disabled', async () => {
+      const request = await extractWithUserinfo({ groups: ['team'] }, fieldConfig);
+      expect(request.session.pendingUser?.groups).toBeUndefined();
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('stores no groups and warns if the claim is missing', async () => {
+      const request = await extractWithUserinfo({}, { ...fieldConfig, groupsField: 'groups' });
+      expect(request.session.pendingUser?.groups).toBeUndefined();
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('syncUserGroups', () => {
+    const managedGroupPredicate = (): ((groupName: string) => boolean) =>
+      jest.mocked(groupsService.syncGroupMemberships).mock.calls[0][2];
+
+    it('throws NotFoundException for unknown OIDC identifier', async () => {
+      await expect(oidcService.syncUserGroups('unknown-oidc', 7, ['team'])).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('does nothing if group sync is disabled', async () => {
+      await oidcService.syncUserGroups(mockOidcConfig.identifier, 7, ['team']);
+      expect(groupsService.syncGroupMemberships).not.toHaveBeenCalled();
+    });
+
+    it('does nothing if no groups were received', async () => {
+      setClientConfig({ groupsField: 'groups' });
+      await oidcService.syncUserGroups(mockOidcConfig.identifier, 7, undefined);
+      expect(groupsService.syncGroupMemberships).not.toHaveBeenCalled();
+    });
+
+    it('ignores group names starting with an underscore', async () => {
+      setClientConfig({ groupsField: 'groups' });
+      await oidcService.syncUserGroups(mockOidcConfig.identifier, 7, [
+        'team',
+        '_EVERYONE',
+        '_LOGGED_IN',
+      ]);
+      expect(groupsService.syncGroupMemberships).toHaveBeenCalledWith(
+        7,
+        ['team'],
+        expect.any(Function),
+      );
+      expect(managedGroupPredicate()('_EVERYONE')).toBe(false);
+      expect(managedGroupPredicate()('other')).toBe(true);
+    });
+
+    it('removes managed memberships if the provider sends no groups', async () => {
+      setClientConfig({ groupsField: 'groups' });
+      await oidcService.syncUserGroups(mockOidcConfig.identifier, 7, []);
+      expect(groupsService.syncGroupMemberships).toHaveBeenCalledWith(7, [], expect.any(Function));
+    });
+
+    it('only manages groups matching the allow regex', async () => {
+      setClientConfig({ groupsField: 'groups', groupsAllowRegex: '^enumera-' });
+      await oidcService.syncUserGroups(mockOidcConfig.identifier, 7, ['enumera-team', 'other']);
+      expect(groupsService.syncGroupMemberships).toHaveBeenCalledWith(
+        7,
+        ['enumera-team'],
+        expect.any(Function),
+      );
+      expect(managedGroupPredicate()('other')).toBe(false);
+      expect(managedGroupPredicate()('enumera-old')).toBe(true);
+    });
   });
 
   describe('processBackchannelLogout', () => {

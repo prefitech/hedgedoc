@@ -706,6 +706,44 @@ describe('authConfig', () => {
         expect(firstOidc.profilePictureField).toEqual(profilePictureField);
         expect(firstOidc.emailField).toEqual(emailField);
         expect(firstOidc.enableRegistration).toEqual(false);
+        expect(firstOidc.groupsField).toBeUndefined();
+        expect(firstOidc.groupsAllowRegex).toBeUndefined();
+        restore();
+      });
+      it('when HD_AUTH_OIDC_GITLAB_GROUPS_FIELD and HD_AUTH_OIDC_GITLAB_GROUPS_ALLOW_REGEX are set', () => {
+        const restore = mockedEnv(
+          {
+            ...neededAuthConfig,
+            ...completeOidcConfig,
+            HD_AUTH_OIDC_GITLAB_GROUPS_FIELD: 'groups',
+            HD_AUTH_OIDC_GITLAB_GROUPS_ALLOW_REGEX: '^hedgedoc-',
+          },
+          {
+            clear: true,
+          },
+        );
+        const config = authConfig();
+        const firstOidc = config.oidc[0];
+        expect(firstOidc.groupsField).toEqual('groups');
+        expect(firstOidc.groupsAllowRegex).toEqual('^hedgedoc-');
+        restore();
+      });
+      it('when HD_AUTH_OIDC_GITLAB_GROUPS_FIELD and HD_AUTH_OIDC_GITLAB_GROUPS_ALLOW_REGEX are empty', () => {
+        const restore = mockedEnv(
+          {
+            ...neededAuthConfig,
+            ...completeOidcConfig,
+            HD_AUTH_OIDC_GITLAB_GROUPS_FIELD: '',
+            HD_AUTH_OIDC_GITLAB_GROUPS_ALLOW_REGEX: '',
+          },
+          {
+            clear: true,
+          },
+        );
+        const config = authConfig();
+        const firstOidc = config.oidc[0];
+        expect(firstOidc.groupsField).toBeUndefined();
+        expect(firstOidc.groupsAllowRegex).toBeUndefined();
         restore();
       });
       it('when HD_AUTH_OIDC_GITLAB_THEME is not set', () => {
@@ -1142,6 +1180,25 @@ describe('authConfig', () => {
         authConfig();
         expect(spyConsoleError.mock.calls[0][0]).toContain(
           'HD_AUTH_OIDC_GITLAB_CLIENT_SECRET: Invalid input: expected string, received undefined',
+        );
+        expect(spyProcessExit).toHaveBeenCalledWith(1);
+        restore();
+      });
+      it('when HD_AUTH_OIDC_GITLAB_GROUPS_ALLOW_REGEX is not a valid regular expression', () => {
+        const restore = mockedEnv(
+          {
+            ...neededAuthConfig,
+            ...completeOidcConfig,
+            HD_AUTH_OIDC_GITLAB_GROUPS_FIELD: 'groups',
+            HD_AUTH_OIDC_GITLAB_GROUPS_ALLOW_REGEX: '[unclosed',
+          },
+          {
+            clear: true,
+          },
+        );
+        authConfig();
+        expect(spyConsoleError.mock.calls[0][0]).toContain(
+          'HD_AUTH_OIDC_GITLAB_GROUPS_ALLOW_REGEX: Invalid regular expression',
         );
         expect(spyProcessExit).toHaveBeenCalledWith(1);
         restore();

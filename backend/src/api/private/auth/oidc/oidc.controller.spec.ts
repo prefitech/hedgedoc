@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals';
+import { AuthProviderType } from '@hedgedoc/commons';
+import { FieldNameIdentity, Identity } from '@hedgedoc/database';
 import { UnauthorizedException } from '@nestjs/common';
 import { errors as oidcErrors } from 'openid-client';
 import { Mock } from 'ts-mockery';
@@ -58,9 +60,13 @@ describe('OidcController', () => {
       setContext: jest.fn(),
     });
     const usersService = Mock.of<UsersService>({});
-    const identityService = Mock.of<IdentityService>({});
+    const identityService = Mock.of<IdentityService>({
+      mayUpdateIdentity: jest.fn(() => false),
+    });
     oidcService = Mock.of<OidcService>({
       extractUserInfoFromCallback: jest.fn(),
+      getExistingOidcIdentity: jest.fn<OidcService['getExistingOidcIdentity']>(),
+      syncUserGroups: jest.fn(),
     });
     controller = new OidcController(logger, usersService, identityService, oidcService);
   });
@@ -146,5 +152,76 @@ describe('OidcController', () => {
       loginState: null,
     });
     expect(saveSession).toHaveBeenCalledTimes(1);
+  });
+
+  describe('group sync', () => {
+    const userInfo = { username: 'carol', displayName: 'Carol', photoUrl: null, email: null };
+    let request: RequestWithSession;
+
+    beforeEach(() => {
+      request = Mock.of<RequestWithSession>({
+        headers: {
+          'sec-fetch-dest': 'document',
+          'sec-fetch-mode': 'navigate',
+        },
+        session: {
+          csrfToken: null,
+          loginAuthProviderIdentifier: null,
+          loginAuthProviderType: null,
+          oidc: {
+            idToken: null,
+            loginCode: 'code',
+            loginState: 'state',
+            sid: null,
+          },
+          pendingUser: null,
+          save: saveSession,
+          userId: null,
+        },
+      });
+      jest.spyOn(oidcService, 'extractUserInfoFromCallback').mockImplementation(() => {
+        request.session.pendingUser = {
+          authProviderType: AuthProviderType.OIDC,
+          authProviderIdentifier: 'test',
+          providerUserId: 'carol-id',
+          confirmationData: userInfo,
+          groups: ['team'],
+        };
+        return Promise.resolve(userInfo);
+      });
+    });
+
+    it('syncs the groups of a returning user', async () => {
+      jest
+        .spyOn(oidcService, 'getExistingOidcIdentity')
+        .mockResolvedValue(Mock.of<Identity>({ [FieldNameIdentity.userId]: 7 }));
+
+      await expect(controller.callback('test', request)).resolves.toEqual({ url: '/' });
+      expect(oidcService.syncUserGroups).toHaveBeenCalledWith('test', 7, ['team']);
+      expect(request.session.userId).toBe(7);
+    });
+
+    it('does not sync groups before a new user is confirmed', async () => {
+      jest.spyOn(oidcService, 'getExistingOidcIdentity').mockResolvedValue(null);
+
+      await expect(controller.callback('test', request)).resolves.toEqual({ url: '/new-user' });
+      expect(oidcService.syncUserGroups).not.toHaveBeenCalled();
+      expect(request.session.pendingUser?.groups).toEqual(['team']);
+    });
+
+    it('does not log the user in if the group sync fails', async () => {
+      jest
+        .spyOn(oidcService, 'getExistingOidcIdentity')
+        .mockResolvedValue(Mock.of<Identity>({ [FieldNameIdentity.userId]: 7 }));
+      jest
+        .spyOn(oidcService, 'syncUserGroups')
+        .mockRejectedValue(new Error('Database unavailable'));
+
+      await expect(controller.callback('test', request)).resolves.toEqual({
+        url: '/login?error=internal',
+      });
+      expect(request.session.userId).toBeNull();
+      expect(request.session.pendingUser).toBeNull();
+    });
   });
 });

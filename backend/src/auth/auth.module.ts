@@ -5,6 +5,7 @@
  */
 import { Module } from '@nestjs/common';
 
+import { GroupsModule } from '../groups/groups.module';
 import { SessionModule } from '../sessions/session.module';
 import { UsersModule } from '../users/users.module';
 import { IdentityService } from './identity.service';
@@ -13,7 +14,7 @@ import { LocalService } from './local/local.service';
 import { OidcService } from './oidc/oidc.service';
 
 @Module({
-  imports: [UsersModule, SessionModule],
+  imports: [UsersModule, SessionModule, GroupsModule],
   controllers: [],
   providers: [IdentityService, LdapService, LocalService, OidcService],
   exports: [IdentityService, LdapService, LocalService, OidcService],

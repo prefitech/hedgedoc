@@ -119,6 +119,11 @@ export class OidcController {
           userInfo.photoUrl,
         );
       }
+      await this.oidcService.syncUserGroups(
+        oidcIdentifier,
+        userId,
+        request.session.pendingUser?.groups,
+      );
 
       request.session.userId = userId;
       request.session.loginAuthProviderType = AuthProviderType.OIDC;

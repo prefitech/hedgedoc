@@ -106,6 +106,92 @@ export class GroupsService {
   }
 
   /**
+   * Synchronizes the group memberships of a user with a list of group names from an external auth provider
+   *
+   * Groups that do not exist yet are created with their name as display name.
+   * Memberships in groups that are not in the list are removed, but only if isManagedGroup returns true for them.
+   * Special groups are never added or removed.
+   *
+   * @param userId The id of the user whose memberships should be synchronized
+   * @param groupNames The names of the groups the user should be a member of
+   * @param isManagedGroup Decides whether the membership in a group with the given name may be removed
+   */
+  async syncGroupMemberships(
+    userId: number,
+    groupNames: string[],
+    isManagedGroup: (groupName: string) => boolean,
+  ): Promise<void> {
+    const uniqueGroupNames = [...new Set(groupNames)];
+    await this.knex.transaction(async (transaction) => {
+      let wantedGroupIds: number[] = [];
+      if (uniqueGroupNames.length > 0) {
+        await transaction(TableGroup)
+          .insert(
+            uniqueGroupNames.map((name) => ({
+              [FieldNameGroup.name]: name,
+              [FieldNameGroup.displayName]: name,
+              [FieldNameGroup.isSpecial]: false,
+            })),
+          )
+          .onConflict(FieldNameGroup.name)
+          .ignore();
+        const wantedGroups = await transaction(TableGroup)
+          .select<Pick<Group, FieldNameGroup.id>[]>(FieldNameGroup.id)
+          .whereIn(FieldNameGroup.name, uniqueGroupNames)
+          .andWhere(FieldNameGroup.isSpecial, false);
+        wantedGroupIds = wantedGroups.map((group) => group[FieldNameGroup.id]);
+      }
+
+      const currentGroups = await transaction(TableGroup)
+        .join(
+          TableGroupUser,
+          `${TableGroup}.${FieldNameGroup.id}`,
+          `${TableGroupUser}.${FieldNameGroupUser.groupId}`,
+        )
+        .select<Pick<Group, FieldNameGroup.id | FieldNameGroup.name | FieldNameGroup.isSpecial>[]>(
+          `${TableGroup}.${FieldNameGroup.id}`,
+          `${TableGroup}.${FieldNameGroup.name}`,
+          `${TableGroup}.${FieldNameGroup.isSpecial}`,
+        )
+        .where(`${TableGroupUser}.${FieldNameGroupUser.userId}`, userId);
+      const currentGroupIds = new Set(currentGroups.map((group) => group[FieldNameGroup.id]));
+      const wantedGroupIdSet = new Set(wantedGroupIds);
+
+      const groupIdsToAdd = wantedGroupIds.filter((groupId) => !currentGroupIds.has(groupId));
+      const groupIdsToRemove = currentGroups
+        .filter(
+          (group) =>
+            !group[FieldNameGroup.isSpecial] &&
+            isManagedGroup(group[FieldNameGroup.name]) &&
+            !wantedGroupIdSet.has(group[FieldNameGroup.id]),
+        )
+        .map((group) => group[FieldNameGroup.id]);
+
+      if (groupIdsToAdd.length > 0) {
+        await transaction(TableGroupUser)
+          .insert(
+            groupIdsToAdd.map((groupId) => ({
+              [FieldNameGroupUser.userId]: userId,
+              [FieldNameGroupUser.groupId]: groupId,
+            })),
+          )
+          .onConflict([FieldNameGroupUser.userId, FieldNameGroupUser.groupId])
+          .ignore();
+      }
+      if (groupIdsToRemove.length > 0) {
+        await transaction(TableGroupUser)
+          .where(FieldNameGroupUser.userId, userId)
+          .whereIn(FieldNameGroupUser.groupId, groupIdsToRemove)
+          .delete();
+      }
+      this.logger.debug(
+        `Synchronized groups of user ${userId}: added ${groupIdsToAdd.length}, removed ${groupIdsToRemove.length}`,
+        'syncGroupMemberships',
+      );
+    });
+  }
+
+  /**
    * Fetches all groups the user is a member of, including the special groups
    *
    * @param userId The id of the user to fetch the groups for

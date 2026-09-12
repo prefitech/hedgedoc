@@ -17,6 +17,21 @@ import {
 } from './utils';
 import { buildErrorMessage, extractDescriptionFromZodIssue } from './zod-error-message';
 
+/**
+ * Checks whether a string can be compiled into a regular expression
+ *
+ * @param value The string to check
+ * @returns true if the string is a valid regular expression, false otherwise
+ */
+function isValidRegex(value: string): boolean {
+  try {
+    RegExp(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const ldapSchema = z
   .object({
     identifier: z.string().describe('HD_AUTH_LDAP_SERVERS'),
@@ -103,6 +118,12 @@ const oidcSchema = z.object({
     .describe('HD_AUTH_OIDC_*_PROFILE_PICTURE_FIELD'),
   emailField: z.string().default('email').describe('HD_AUTH_OIDC_*_EMAIL_FIELD'),
   enableRegistration: z.boolean().default(true).describe('HD_AUTH_OIDC_*_ENABLE_REGISTRATION'),
+  groupsField: z.string().optional().describe('HD_AUTH_OIDC_*_GROUPS_FIELD'),
+  groupsAllowRegex: z
+    .string()
+    .refine(isValidRegex, { error: 'Invalid regular expression' })
+    .optional()
+    .describe('HD_AUTH_OIDC_*_GROUPS_ALLOW_REGEX'),
 });
 
 const schema = z.object({
@@ -197,6 +218,9 @@ export default registerAs('authConfig', () => {
     enableRegistration: parseOptionalBoolean(
       process.env[`HD_AUTH_OIDC_${name}_ENABLE_REGISTRATION`],
     ),
+    // An empty value disables the group sync just like an unset one
+    groupsField: process.env[`HD_AUTH_OIDC_${name}_GROUPS_FIELD`] || undefined,
+    groupsAllowRegex: process.env[`HD_AUTH_OIDC_${name}_GROUPS_ALLOW_REGEX`] || undefined,
   }));
 
   const authConfig = schema.safeParse({

@@ -82,14 +82,21 @@ export class AuthController {
     ) {
       throw new BadRequestException('No pending user data');
     }
-    request.session.userId =
-      await this.identityService.createUserWithIdentityFromPendingUserConfirmation(
-        request.session.pendingUser.confirmationData,
-        pendingUserConfirmationData,
-        request.session.pendingUser.authProviderType,
+    const userId = await this.identityService.createUserWithIdentityFromPendingUserConfirmation(
+      request.session.pendingUser.confirmationData,
+      pendingUserConfirmationData,
+      request.session.pendingUser.authProviderType,
+      request.session.pendingUser.authProviderIdentifier,
+      request.session.pendingUser.providerUserId,
+    );
+    if (request.session.pendingUser.authProviderType === AuthProviderType.OIDC) {
+      await this.oidcService.syncUserGroups(
         request.session.pendingUser.authProviderIdentifier,
-        request.session.pendingUser.providerUserId,
+        userId,
+        request.session.pendingUser.groups,
       );
+    }
+    request.session.userId = userId;
     request.session.loginAuthProviderType = request.session.pendingUser.authProviderType;
     request.session.loginAuthProviderIdentifier =
       request.session.pendingUser.authProviderIdentifier;

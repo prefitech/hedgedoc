@@ -22,6 +22,7 @@ import appConfiguration, { AppConfig } from '../../config/app.config';
 import authConfiguration, { AuthConfig, OidcConfig } from '../../config/auth.config';
 import { PendingUserInfoDto } from '../../dtos/pending-user-info.dto';
 import { NotInDBError } from '../../errors/errors';
+import { GroupsService } from '../../groups/groups.service';
 import { ConsoleLoggerService } from '../../logger/console-logger.service';
 import { IdentityService } from '../identity.service';
 import { SessionService } from '../../sessions/session.service';
@@ -41,6 +42,7 @@ export class OidcService {
   constructor(
     private identityService: IdentityService,
     private sessionService: SessionService,
+    private groupsService: GroupsService,
     private logger: ConsoleLoggerService,
     @Inject(authConfiguration.KEY)
     private authConfig: AuthConfig,
@@ -225,6 +227,16 @@ export class OidcService {
       oidcConfig.profilePictureField,
       undefined,
     );
+    let groups: string[] | undefined = undefined;
+    if (oidcConfig.groupsField) {
+      groups = OidcService.getGroupsFromResponse(userInfoResponse, oidcConfig.groupsField);
+      if (groups === undefined) {
+        this.logger.warn(
+          `Group sync is enabled for OIDC provider "${oidcIdentifier}", but the userinfo response has no usable field "${oidcConfig.groupsField}". Group memberships are left unchanged.`,
+          'extractUserInfoFromCallback',
+        );
+      }
+    }
     const newUserData = {
       username,
       displayName,
@@ -236,8 +248,44 @@ export class OidcService {
       authProviderIdentifier: oidcIdentifier,
       providerUserId: userId,
       confirmationData: newUserData,
+      groups,
     };
     return PendingUserInfoDto.create(newUserData);
+  }
+
+  /**
+   * Synchronizes the group memberships of a user with the groups sent by the OIDC provider
+   *
+   * Does nothing if group sync is disabled for the provider or if no groups were received.
+   * Group names starting with an underscore are ignored, as they are reserved for special groups.
+   * If an allow regex is configured, only groups matching it are added or removed.
+   *
+   * @param oidcIdentifier The identifier of the OIDC configuration
+   * @param userId The id of the user whose groups should be synchronized
+   * @param groups The group names received from the provider, undefined if none were received
+   */
+  async syncUserGroups(
+    oidcIdentifier: string,
+    userId: number,
+    groups: string[] | undefined,
+  ): Promise<void> {
+    const clientConfig = this.clientConfigs.get(oidcIdentifier);
+    if (!clientConfig) {
+      throw new NotFoundException('OIDC configuration not found or initialized');
+    }
+    const oidcConfig = clientConfig.config;
+    if (!oidcConfig.groupsField || groups === undefined) {
+      return;
+    }
+    const allowRegex =
+      oidcConfig.groupsAllowRegex === undefined ? undefined : RegExp(oidcConfig.groupsAllowRegex);
+    const isManagedGroup = (groupName: string): boolean =>
+      !groupName.startsWith('_') && (allowRegex === undefined || allowRegex.test(groupName));
+    await this.groupsService.syncGroupMemberships(
+      userId,
+      groups.filter(isManagedGroup),
+      isManagedGroup,
+    );
   }
 
   /**
@@ -314,6 +362,34 @@ export class OidcService {
     return field in response && response[field] !== undefined && response[field] !== null
       ? (response[field] as string | T)
       : defaultValue;
+  }
+
+  /**
+   * Reads the group names from the userinfo response
+   *
+   * The field may contain a list of strings or a comma-separated string.
+   *
+   * @param response The response from the OIDC userinfo endpoint
+   * @param field The field that contains the groups
+   * @returns The trimmed, non-empty group names, or undefined if the field is missing or of an unsupported type
+   */
+  private static getGroupsFromResponse(
+    response: UserinfoResponse,
+    field: string,
+  ): string[] | undefined {
+    const value = response[field];
+    let rawGroups: unknown[];
+    if (Array.isArray(value)) {
+      rawGroups = value;
+    } else if (typeof value === 'string') {
+      rawGroups = value.split(',');
+    } else {
+      return undefined;
+    }
+    return rawGroups
+      .filter((group): group is string => typeof group === 'string')
+      .map((group) => group.trim())
+      .filter((group) => group !== '');
   }
 
   /**

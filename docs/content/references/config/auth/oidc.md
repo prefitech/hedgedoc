@@ -20,9 +20,32 @@ Replace `$NAME` with the identifier of the OIDC server in the table below accord
 | `HD_AUTH_OIDC_$NAME_THEME`               | -                | `gitlab`, `google`, ...                    | The theme in which the button on the login page should be displayed. See below for a list of options. If not defined, a generic one will be used. |
 | `HD_AUTH_OIDC_$NAME_ENABLE_REGISTRATION` | `true`           | `true`, `false`                            | If set to `false`, only users that already exist in the HedgeDoc server are able to login.                                                        |
 
+| `HD_AUTH_OIDC_$NAME_GROUPS_FIELD`        | -                | `groups`                                   | The field of the userinfo response that contains the groups of the user. If not set or empty, groups are not synchronized. See below.            |
+| `HD_AUTH_OIDC_$NAME_GROUPS_ALLOW_REGEX`  | -                | `^hedgedoc-`                               | A regular expression. If set, only groups whose name matches it are synchronized. See below.                                                     |
+
 As redirect URL you should configure
 `https://hedgedoc.example.com/api/private/auth/oidc/$NAME/callback` where `$NAME`
 is the identifier of the OIDC server. Remember to update the domain to your one.
+
+## Group synchronization
+
+If `HD_AUTH_OIDC_$NAME_GROUPS_FIELD` is set, HedgeDoc reads the groups of a user from that field
+of the userinfo response on every login and updates the user's group memberships accordingly.
+The field may contain a list of group names or a comma-separated string.
+
+- Groups that do not exist in HedgeDoc yet are created, with their name as display name.
+- The user is added to every received group.
+- The user is removed from groups that were not received. If `HD_AUTH_OIDC_$NAME_GROUPS_ALLOW_REGEX`
+  is set, this only applies to groups whose name matches the regular expression; memberships in
+  all other groups are left untouched.
+- Group names starting with `_` are ignored, as they are reserved for HedgeDoc's special groups.
+- If the userinfo response does not contain the field at all, the memberships are not changed.
+
+The synchronization happens independently of `HD_AUTH_SYNC_SOURCE`, which only controls the
+profile data (display name, email address and profile picture).
+
+With Keycloak, for example, add a "Group Membership" mapper with the token claim name `groups`
+and "Add to userinfo" enabled to the client, and set `HD_AUTH_OIDC_$NAME_GROUPS_FIELD` to `groups`.
 
 ## Back-Channel Logout
 

@@ -64,7 +64,7 @@ const up = async function (knex) {
   // Create group table
   await knex.schema.createTable(TableGroup, (table) => {
     table.increments(FieldNameGroup.id).primary();
-    table.string(FieldNameGroup.name).notNullable();
+    table.string(FieldNameGroup.name).notNullable().unique();
     table.string(FieldNameGroup.displayName).notNullable();
     table.boolean(FieldNameGroup.isSpecial).notNullable().defaultTo(false);
     table.index([FieldNameGroup.name], 'idx_group_name');
