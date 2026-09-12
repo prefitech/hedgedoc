@@ -19,9 +19,8 @@ Replace `$NAME` with the identifier of the OIDC server in the table below accord
 | `HD_AUTH_OIDC_$NAME_CLIENT_SECRET`       | -                | `c3f70208375cf26700920678ec55b7df7cd75266` | The secret for the HedgeDoc application, given by the OIDC server.                                                                                |
 | `HD_AUTH_OIDC_$NAME_THEME`               | -                | `gitlab`, `google`, ...                    | The theme in which the button on the login page should be displayed. See below for a list of options. If not defined, a generic one will be used. |
 | `HD_AUTH_OIDC_$NAME_ENABLE_REGISTRATION` | `true`           | `true`, `false`                            | If set to `false`, only users that already exist in the HedgeDoc server are able to login.                                                        |
-
-| `HD_AUTH_OIDC_$NAME_GROUPS_FIELD`        | -                | `groups`                                   | The field of the userinfo response that contains the groups of the user. If not set or empty, groups are not synchronized. See below.            |
-| `HD_AUTH_OIDC_$NAME_GROUPS_ALLOW_REGEX`  | -                | `^hedgedoc-`                               | A regular expression. If set, only groups whose name matches it are synchronized. See below.                                                     |
+| `HD_AUTH_OIDC_$NAME_GROUPS_FIELD`        | -                | `groups`                                   | The field of the userinfo response that contains the groups of the user. If not set or empty, groups are not synchronized. See below.             |
+| `HD_AUTH_OIDC_$NAME_GROUPS_ALLOW_REGEX`  | -                | `^team-`                                   | A regular expression. If set, only groups whose name matches it are synchronized. See below.                                                      |
 
 As redirect URL you should configure
 `https://hedgedoc.example.com/api/private/auth/oidc/$NAME/callback` where `$NAME`
